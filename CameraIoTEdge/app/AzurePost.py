@@ -51,6 +51,7 @@ def postblob():
 
 def receive_message_callback(message, counter):
     message_buffer = message.get_bytearray()
+    size = len(message_buffer)
     msg = message_buffer[:size].decode('utf-8')
     if(msg == "image"):
         postblob()
