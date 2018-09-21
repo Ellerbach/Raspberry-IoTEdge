@@ -9,7 +9,7 @@ So very naturally, I decided to create the same project with the new Azure IoT P
 What are the challenges in this project?
 
 * There is a need of building a container for the RPI containing Python 3.5 and OpenCV to access to the webcam
-* Building an app in Python, connecting to Azure IoT Edge, listening to messages and posting the image to a blob storage
+* Building an app in Python, connecting to Azure IoT Edge, listening to messages and posting the image to a blob storage. Using the concept of Device Twin in Azure Iot Hub to setup the device with specific settings
 * Setting up the RPI for Azure IoT Edge, setting up the parameters
 
 So let's start with the code part.
@@ -36,6 +36,7 @@ class camera:
     def __init__(self):
         # take the first camera
         self.cam = cv2.VideoCapture(0)
+        self.timezone = 0
         pass
 ```
 
@@ -57,7 +58,7 @@ def TakePicture(self):
         fontColor = (255,255,255)
         lineType = 1
         # format the datetime
-        today = datetime.datetime.now()
+        today = datetime.datetime.now() + datetime.timedelta(hours=self.timezone)
         thedate = '{:%Y/%m/%d %H:%M:%S}'.format(today)
         cv2.putText(img, thedate,
             bottomLeftCornerOfText,
@@ -234,6 +235,65 @@ The very interesting part is the ```receive_message_callback(message, counter)``
 The code is very straight forward, it just decode, check if the message is "image" and if true, call the function to take a picture and upload it to the blob storage.
 
 This code is not posting any data on Azure IoT Hub. It can of course. But it's done in another part of the code, I did not rewrite yet. And it can be anyway in another container. This allow to separate various function and feature and allowing to deploy updates for only parts of the code.
+
+### Using Device Twin to pass settings to the device
+
+Device Twin is a great concept in Azure IoT Hub. It does allow to specify specific settings for the device and as well to the device to push some specific states. I will use it to push the time zone to use for the picture which will be taken by the camera. The code will run in a docker container and by default, it uses the UTC time without any time zone. One option is to map the time from the container. But because I want to illustrate the concept of device twin, I won't use it.
+
+There is a bit of code to add from the previous part. It's just about adding 2 functions. One which is a callback function called when there is a configuration to pass, one to call (it's technically a call back as well) when you send a configuration.
+
+```python
+def device_twin_callback(update_state, payload, user_context):
+    try:
+        js = json.loads(payload)
+        timezone = js["desired"]["timezone"]
+        cam.timezone = int(timezone)
+        reported_state = "{\"timezone\":" + str(cam.timezone) + "}"
+        client.send_reported_state(reported_state, len(reported_state), send_reported_state_callback, TWIN_CONTEXT)
+    except:
+        pass
+
+def send_reported_state_callback(status_code, user_context):
+    pass
+```
+
+The ```device_twin_callback``` function is called when a new configuration is sent. In our case, we will setup the device twin to send a timezone parameter as an integer. It will be a shift time for the camera timestamp. What is send to the device is a simple json containing the full configation of both what is desired and last reported.
+
+```json
+{'desired': {'timezone': 2, '$version': 4}, 'reported': {'timezone': 2, '$version': 2}}
+```
+
+So we just analyze the json, get the *desired* node then the *timezone* element and convert it to int and pass it to the camera. Once done, to make sure we report the state, we just send back the configuration to the IoT Hub.
+
+To setup the device twin in Azure, from the portal, just go on your device, add the timezone in the desired section and save.
+
+![twin setup](/docs/twin.png)
+
+The portal will give you informations of latestest update. You'll note from what is sent to the device and wha tis reported to the portal a version number. It is automatically incremented everytime you modify the twin. It's a way to keep track of modication and allow you to manage it in your code as well. You'll notice as well the context which is passed, it's as well a way for you to add some information.
+
+And of course, you need to initialize all this in the ```iothub_client_init()``` function. Just add the line to say we want a call back.
+
+```Python
+def iothub_client_init():
+    # ...
+    # code before
+    if client.protocol == IoTHubTransportProvider.MQTT:
+        client.set_device_twin_callback(
+            device_twin_callback, TWIN_CONTEXT)
+        client.set_option("logtrace", 0)
+    # code after
+    # ...
+```
+
+To test if the setting is passed correctly, we can use a simple Flask route:
+
+```python
+@app.route('/timezone')
+def timezone():
+    return "The timezone is: " + str(cam.timezone) + "h"
+```
+
+so you can easilly test if the twin configuration has been passed. And of course, you can test it directly in the picture.
 
 ## Building a Docker OpenCV image with Python 3.5 for RaspberryPi and other armhf devices
 

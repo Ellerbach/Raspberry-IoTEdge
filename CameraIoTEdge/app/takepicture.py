@@ -10,6 +10,7 @@ class camera:
     def __init__(self):
         # take the first camera
         self.cam = cv2.VideoCapture(0)
+        self.timezone = 0
         pass
 
     def TakePicture(self):     
@@ -27,7 +28,7 @@ class camera:
         fontColor = (255,255,255)
         lineType = 1
         # format the datetime
-        today = datetime.datetime.now()
+        today = datetime.datetime.now() + datetime.timedelta(hours=self.timezone)
         thedate = '{:%Y/%m/%d %H:%M:%S}'.format(today)
         cv2.putText(img, thedate, 
             bottomLeftCornerOfText, 
